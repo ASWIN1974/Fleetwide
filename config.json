@@ -1,0 +1,17 @@
+{
+  "index_doc": "https://cisco-my.sharepoint.com/:w:/r/personal/dhshah2_cisco_com/_layouts/15/doc.aspx?sourcedoc=%7Bfd877be6-6dac-451a-b4fc-ef4b16d890a5%7D&action=edit",
+  "shift_utc": ["07:00", "21:00"],
+  "projects": {
+    "NOAH Migration": {"title": "Noah Migration -- Sheet", "tab": "NoahMaster"},
+    "RT": {"title": "RT (Pocky, Quality Street, Rolo)", "tab": "All_Stacks"},
+    "ES Upgrades": {"title": "ES", "tab": "All_Stacks"},
+    "MARC": {"title": "Project MARC", "tab": "All_Stacks_Server FY26"},
+    "i3 Migration": {"title": "i3 migration", "tab": "AllStacks"},
+    "i8 Migration": {"title": "i8g i8ge Migrations", "tab": "AllStacks"},
+    "LB Migration HEC": {"title": "LB Migration - HEC", "tab": "All Stacks"},
+    "LB Migration SHC": {"title": "LB Migration - SHC", "tab": "All Stacks"},
+    "KV Store Data Migration": {"title": "KV Store Data Migration", "tab": "All_Stacks_KVStore"},
+    "V1 Search API": {"title": "V1 Search API", "tab": "All_Stacks"}
+  },
+  "manual_sections": ["Cal Invite -> scale in", "Cal Invite - NOAH Migration"]
+}
