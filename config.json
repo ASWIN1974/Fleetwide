@@ -1,6 +1,6 @@
 {
   "index_doc": "https://cisco-my.sharepoint.com/:w:/r/personal/dhshah2_cisco_com/_layouts/15/doc.aspx?sourcedoc=%7Bfd877be6-6dac-451a-b4fc-ef4b16d890a5%7D&action=edit",
-  "shift_utc": ["07:00", "21:00"],
+  "shift_utc": ["21:00", "10:00"],
   "projects": {
     "NOAH Migration": {"title": "Noah Migration -- Sheet", "tab": "NoahMaster"},
     "RT": {"title": "RT (Pocky, Quality Street, Rolo)", "tab": "All_Stacks"},

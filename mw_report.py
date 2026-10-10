@@ -51,7 +51,13 @@ GUID_RE = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA
 DATE_COLS = ("es_mw_date", "mw_date")
 TIME_COLS = ("es_mw_time", "v1_mw_time", "mw_time")
 STATUS_COLS = ("rm_status", "rm status", "status")
-INCLUDED_STATUS = "tentative"
+# "Oct 10, 2026 04:00-06:00 UTC" (some sheets drop the comma) -- the column the team schedules from, so it
+# wins over the date/time columns whenever a sheet has it.
+FORMAL_COLS = ("formal_date_time",)
+FORMAL_RE = re.compile(r"([A-Z][a-z]{2}) (\d{2}),? (\d{4}) (\d{2}:\d{2}.*)")
+# Every MW counts unless it was called off or scheduled outside the batch;
+# statuses move on to Completed, Failed, etc. once the MW runs.
+EXCLUDED_STATUSES = ("cancelled", "canceled", "scheduled manually")
 SEPARATOR = "-" * 37
 
 
@@ -133,7 +139,8 @@ class SharePointReader:
         url = direct_api_url(link) or self._resolve_sharing_link(link)
         resp = self.req.get(url, timeout=180000)
         ctype = resp.headers.get("content-type", "")
-        if is_login_page(resp) or "text/html" in ctype:
+        # An expired session on the REST API comes back as 403, not 401.
+        if is_login_page(resp) or resp.status == 403 or "text/html" in ctype:
             raise AuthRequired(f"HTTP {resp.status} at {resp.url}")
         if not resp.ok:
             raise RuntimeError(f"HTTP {resp.status} reading {link}: {resp.text()[:300]}")
@@ -149,7 +156,13 @@ class SharePointReader:
             self.close()
             interactive_login(self.p, link)
             self._open()
-            return self._fetch(link)
+            try:
+                return self._fetch(link)
+            except AuthRequired as e:
+                raise RuntimeError(
+                    f"Still unauthorized after fresh login ({e}); check that your "
+                    f"account has access to {link}"
+                ) from None
 
     def close(self):
         if self.req is not None:
@@ -210,28 +223,47 @@ def stack_tab(wb, preferred: str | None):
     raise RuntimeError("no tab with an mw_date column")
 
 
-def windows_for_day(ws, day: dt.date, shift: tuple[str, str]) -> list[tuple[str, int]]:
+def shift_bounds(day: dt.date, shift: tuple[str, str]) -> tuple[dt.datetime, dt.datetime]:
+    # A shift whose start is after its end began the previous evening.
+    start, end = (dt.datetime.combine(day, dt.time.fromisoformat(t)) for t in shift)
+    if start >= end:
+        start -= dt.timedelta(days=1)
+    return start, end
+
+
+def windows_in_shift(ws, start: dt.datetime, end: dt.datetime) -> list[tuple[dt.date, str, int]]:
     hdr = header(ws)
     d, t, s = first_col(hdr, DATE_COLS), first_col(hdr, TIME_COLS), first_col(hdr, STATUS_COLS)
+    f = first_col(hdr, FORMAL_COLS)
 
     def cell(row, i):
         return row[i] if i is not None and i < len(row) else None
 
     counts = Counter()
     for row in ws.iter_rows(min_row=2, values_only=True):
-        v = cell(row, d)
-        if isinstance(v, dt.datetime):
-            v = v.date()
-        if v != day:
+        if f is not None:
+            fm = FORMAL_RE.match(str(cell(row, f) or "").strip())
+            if not fm:
+                continue
+            try:
+                v = dt.datetime.strptime(" ".join(fm.group(1, 2, 3)), "%b %d %Y").date()
+            except ValueError:  # blank dates render as "Jan 00, 1900"
+                continue
+            window = fm.group(4)
+        else:
+            v = cell(row, d)
+            if isinstance(v, dt.datetime):
+                v = v.date()
+            window = str(cell(row, t) or "").strip()
+        if not isinstance(v, dt.date) or not (start.date() <= v <= end.date()):
             continue
-        if str(cell(row, s) or "").strip().lower() != INCLUDED_STATUS:
+        if str(cell(row, s) or "").strip().lower() in EXCLUDED_STATUSES:
             continue
-        window = str(cell(row, t) or "").strip()
-        start = re.match(r"\d{2}:\d{2}", window)
-        if not start or not (shift[0] <= start.group(0) < shift[1]):
+        m = re.match(r"\d{2}:\d{2}", window)
+        if not m or not (start <= dt.datetime.combine(v, dt.time.fromisoformat(m.group(0))) < end):
             continue
-        counts[window] += 1
-    return sorted(counts.items())
+        counts[(v, window)] += 1
+    return [(v, w, n) for (v, w), n in sorted(counts.items())]
 
 
 def inspect_workbook(name: str, data: bytes, max_rows: int):
@@ -257,7 +289,7 @@ def build_message(day: dt.date, sections: list[tuple[str, list[str]]]) -> str:
 
 
 def project_sections(reader, cfg: dict, links, day: dt.date) -> list[tuple[str, list[str]]]:
-    shift = tuple(cfg["shift_utc"])
+    start, end = shift_bounds(day, tuple(cfg["shift_utc"]))
     projects = cfg.get("projects", {})
 
     def match(text):
@@ -275,11 +307,11 @@ def project_sections(reader, cfg: dict, links, day: dt.date) -> list[tuple[str, 
         try:
             wb = load_workbook(io.BytesIO(reader.read(url)), read_only=True, data_only=True)
             try:
-                windows = windows_for_day(stack_tab(wb, p.get("tab")), day, shift)
+                windows = windows_in_shift(stack_tab(wb, p.get("tab")), start, end)
             finally:
                 wb.close()
             lines = [
-                f"{day:%b %d, %Y} {w} {n} stack{'s' if n != 1 else ''}" for w, n in windows
+                f"{v:%b %d, %Y} {w} {n} stack{'s' if n != 1 else ''}" for v, w, n in windows
             ]
         except Exception as e:
             lines = [f"ERROR: could not read this sheet ({e})"]
