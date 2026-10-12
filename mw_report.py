@@ -44,6 +44,7 @@ SESSION_FILE = PROJECT_DIR / "session.json"
 CONFIG_FILE = PROJECT_DIR / "config.json"
 MESSAGES_DIR = PROJECT_DIR / "messages"
 LOGIN_TIMEOUT_S = 300
+FETCH_ATTEMPTS = 3
 
 W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 R_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -69,6 +70,12 @@ def log(msg: str):
 
 class AuthRequired(Exception):
     pass
+
+
+def first_line(e: Exception) -> str:
+    # Playwright errors append a call log that includes the session cookies;
+    # keep only the summary line so they never reach the message.
+    return (str(e).strip().splitlines() or [type(e).__name__])[0]
 
 
 # ---------------------------------------------------------------- SharePoint
@@ -138,6 +145,19 @@ class SharePointReader:
         return file_api_url(f"{parts.scheme}://{parts.netloc}", f"/sites/{site.group(1)}", m.group(1))
 
     def _fetch(self, link: str) -> bytes:
+        # Large workbooks sometimes drop mid-download ("aborted"); retry those.
+        for attempt in range(1, FETCH_ATTEMPTS + 1):
+            try:
+                return self._fetch_once(link)
+            except (AuthRequired, RuntimeError):
+                raise
+            except Exception as e:
+                if attempt == FETCH_ATTEMPTS:
+                    raise
+                log(f"  retrying after: {first_line(e)}")
+                time.sleep(2 * attempt)
+
+    def _fetch_once(self, link: str) -> bytes:
         url = direct_api_url(link) or self._resolve_sharing_link(link)
         resp = self.req.get(url, timeout=180000)
         ctype = resp.headers.get("content-type", "")
@@ -324,7 +344,7 @@ def project_sections(reader, cfg: dict, links, day: dt.date) -> list[tuple[str, 
                 f"{v:%b %d, %Y} {w} {n} stack{'s' if n != 1 else ''}" for v, w, n in windows
             ]
         except Exception as e:
-            lines = [f"ERROR: could not read this sheet ({e})"]
+            lines = [f"ERROR: could not read this sheet ({first_line(e)})"]
         sections.append((title, lines))
 
     for title in cfg.get("manual_sections", []):
@@ -362,7 +382,7 @@ def main():
                     try:
                         inspect_workbook(text or url, reader.read(url), args.rows)
                     except Exception as e:
-                        print(f"\n=== {text or url} ===\n  FAILED: {e}")
+                        print(f"\n=== {text or url} ===\n  FAILED: {first_line(e)}")
                 return
 
             message = build_message(args.date, project_sections(reader, cfg, links, args.date))
