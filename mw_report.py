@@ -19,6 +19,7 @@ Usage:
 """
 import argparse
 import datetime as dt
+import difflib
 import io
 import json
 import os
@@ -56,7 +57,8 @@ STATUS_COLS = ("rm_status", "rm status", "status")
 FORMAL_COLS = ("formal_date_time",)
 FORMAL_RE = re.compile(r"([A-Z][a-z]{2}) (\d{2}),? (\d{4}) (\d{2}:\d{2}.*)")
 # Every MW counts unless it was called off or scheduled outside the batch;
-# statuses move on to Completed, Failed, etc. once the MW runs.
+# statuses move on to Completed, Failed, etc. once the MW runs. Rows with no
+# status at all were never put in the batch (mws-validation is 0 on them).
 EXCLUDED_STATUSES = ("cancelled", "canceled", "scheduled manually")
 SEPARATOR = "-" * 37
 
@@ -257,7 +259,8 @@ def windows_in_shift(ws, start: dt.datetime, end: dt.datetime) -> list[tuple[dt.
             window = str(cell(row, t) or "").strip()
         if not isinstance(v, dt.date) or not (start.date() <= v <= end.date()):
             continue
-        if str(cell(row, s) or "").strip().lower() in EXCLUDED_STATUSES:
+        status = str(cell(row, s) or "").strip().lower()
+        if s is not None and (not status or status in EXCLUDED_STATUSES):
             continue
         m = re.match(r"\d{2}:\d{2}", window)
         if not m or not (start <= dt.datetime.combine(v, dt.time.fromisoformat(m.group(0))) < end):
@@ -296,6 +299,13 @@ def project_sections(reader, cfg: dict, links, day: dt.date) -> list[tuple[str, 
         for i, (key, p) in enumerate(projects.items()):
             if norm(text).startswith(norm(key)):
                 return i, p
+        # Fall back to the closest key so a typo in the index doc ("ES Upgr4433ades")
+        # still picks up that project's title and tab.
+        keys = {norm(k): i for i, k in enumerate(projects)}
+        close = difflib.get_close_matches(norm(text), keys, n=1, cutoff=0.8)
+        if close:
+            i = keys[close[0]]
+            return i, list(projects.values())[i]
         return len(projects), {}
 
     ordered = sorted(links, key=lambda l: match(l[0])[0])
