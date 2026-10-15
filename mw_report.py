@@ -61,6 +61,8 @@ FORMAL_RE = re.compile(r"([A-Z][a-z]{2}) (\d{2}),? (\d{4}) (\d{2}:\d{2}.*)")
 # statuses move on to Completed, Failed, etc. once the MW runs. Rows with no
 # status at all were never put in the batch (mws-validation is 0 on them).
 EXCLUDED_STATUSES = ("cancelled", "canceled", "scheduled manually")
+# Values in a flag column (see flag_sections in config.json) that put a row in that section.
+FLAG_VALUES = ("yes", "tentative")
 SEPARATOR = "-" * 37
 
 
@@ -253,16 +255,24 @@ def shift_bounds(day: dt.date, shift: tuple[str, str]) -> tuple[dt.datetime, dt.
     return start, end
 
 
-def windows_in_shift(ws, start: dt.datetime, end: dt.datetime) -> list[tuple[dt.date, str, int]]:
+def windows_in_shift(ws, start: dt.datetime, end: dt.datetime,
+                     flag: str | None = None) -> list[tuple[dt.date, str, int]]:
+    """With `flag`, count only the rows whose `flag` column holds one of FLAG_VALUES."""
     hdr = header(ws)
     d, t, s = first_col(hdr, DATE_COLS), first_col(hdr, TIME_COLS), first_col(hdr, STATUS_COLS)
     f = first_col(hdr, FORMAL_COLS)
+    if flag is not None:
+        if flag.lower() not in hdr:
+            raise RuntimeError(f"no {flag} column")
+        fl = hdr.index(flag.lower())
 
     def cell(row, i):
         return row[i] if i is not None and i < len(row) else None
 
     counts = Counter()
     for row in ws.iter_rows(min_row=2, values_only=True):
+        if flag is not None and str(cell(row, fl) or "").strip().lower() not in FLAG_VALUES:
+            continue
         if f is not None:
             fm = FORMAL_RE.match(str(cell(row, f) or "").strip())
             if not fm:
@@ -333,19 +343,31 @@ def project_sections(reader, cfg: dict, links, day: dt.date) -> list[tuple[str, 
     for text, url in ordered:
         _, p = match(text)
         title = p.get("title") or text or url
+        # Extra sections list just the rows flagged yes/tentative in a given column.
+        flags = p.get("flag_sections", {})
         log(f"Reading {title} ...")
         try:
             wb = load_workbook(io.BytesIO(reader.read(url)), read_only=True, data_only=True)
             try:
-                windows = windows_in_shift(stack_tab(wb, p.get("tab")), start, end)
+                ws = stack_tab(wb, p.get("tab"))
+                found = {title: windows_in_shift(ws, start, end)}
+                for col, flag_title in flags.items():
+                    try:
+                        found[flag_title] = windows_in_shift(ws, start, end, flag=col)
+                    except Exception as e:
+                        found[flag_title] = e
             finally:
                 wb.close()
-            lines = [
-                f"{v:%b %d, %Y} {w} {n} stack{'s' if n != 1 else ''}" for v, w, n in windows
-            ]
         except Exception as e:
-            lines = [f"ERROR: could not read this sheet ({first_line(e)})"]
-        sections.append((title, lines))
+            found = dict.fromkeys([title, *flags.values()], e)
+        for t, windows in found.items():
+            if isinstance(windows, Exception):
+                lines = [f"ERROR: could not read this sheet ({first_line(windows)})"]
+            else:
+                lines = [
+                    f"{v:%b %d, %Y} {w} {n} stack{'s' if n != 1 else ''}" for v, w, n in windows
+                ]
+            sections.append((t, lines))
 
     for title in cfg.get("manual_sections", []):
         sections.append((title, ["<fill in from calendar>"]))

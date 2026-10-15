@@ -3,7 +3,8 @@
   "shift_utc": ["21:00", "10:00"],
   "projects": {
     "NOAH Migration": {"title": "Noah Migration -- Sheet", "tab": "NoahMaster"},
-    "RT": {"title": "RT (Pocky, Quality Street, Rolo)", "tab": "All_Stacks"},
+    "RT": {"title": "RT (Pocky, Quality Street, Rolo)", "tab": "All_Stacks",
+           "flag_sections": {"op_exec_md_mongo_to_kvservice": "Kv Migration - RT"}},
     "ES Upgrades": {"title": "ES", "tab": "All_Stacks"},
     "MARC": {"title": "Project MARC", "tab": "All_Stacks_Server FY26"},
     "i3 Migration": {"title": "i3 migration", "tab": "AllStacks"},
